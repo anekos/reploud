@@ -1,0 +1,149 @@
+#!/bin/ruby
+# vim: fileencoding=utf-8 :
+
+require 'socket'
+require 'optparse'
+require 'open3'
+require 'pty'
+require 'expect'
+require 'shellwords'
+
+
+
+class Set < Struct.new(:banner, :prompt, :command_line)
+end
+
+
+Configs = {
+  'lein' => Set.new(
+    /=>\s*/,
+    # /\e\[.*G\r\n/,
+    /.*=>/,
+    %w[lein repl]
+  ),
+  'irb' => Set.new(
+    /\d>\s*/,
+    # /.*=> /,
+    /irb\(main\):\d+:\d+>/,
+    %w[irb]
+  )
+}
+
+SocketName = '.reploud.sock'
+
+
+module Debug
+  def d (*msg)
+    STDERR.puts(msg.map(&:inspect).join(' ')) if @option.debug
+  end
+end
+
+
+class Option
+  attr_reader :banner, :prompt, :socket, :command_line, :debug
+
+  def initialize (params, command_line)
+    if c = Configs[params['repl']]
+      @banner, @prompt, @command_line = c.banner, c.prompt, c.command_line
+    end
+
+    @banner = params['banner']  || params['b'] || @banner
+    @prompt = params['prompt']  || params['p'] || @prompt
+    @socket = params['socket']  || params['s'] || SocketName
+    @command_line = @command_line || command_line
+    @debug = params['debug']
+  end
+
+  def command_line_text
+    @command_line.map {|it| it.shellescape } .join(' ')
+  end
+end
+
+
+class ServerApp
+  include Debug
+
+  def initialize (option)
+    @option = option
+  end
+
+  def run
+    PTY.getpty(@option.command_line_text) do |i, o|
+      o.sync = true
+
+      i.expect(@option.banner) {|it| d :banner, it}
+
+      Socket.unix_server_loop(@option.socket) do |sock, addr|
+        begin
+          expr = sock.read
+        end until !expr.empty?
+
+        o.puts(expr)
+        o.flush
+
+        i.expect(@option.prompt) do |line|
+          d :prompt, line
+          line = line.first.strip.sub!(/#{Regexp.escape(expr)}[\r\n]*/, '').sub(@option.prompt, '').chomp
+
+          d :response, line
+          sock.write(line)
+
+          sock.close_write
+        end
+      end
+    end
+  end
+end
+
+
+class ClientApp
+  include Debug
+
+  def initialize (option)
+    @option = option
+  end
+
+  def run
+    UNIXSocket.open(@option.socket) do |sock|
+      d :write, @option.command_line
+
+      sock.write(@option.command_line.join(' '))
+      sock.close_write
+
+      d :read
+
+      result = sock.read
+
+      d :result, result
+
+      result.gsub!(/\r/, '')
+      result.gsub!(/^\s*nil\s*$/, '')
+      result.chomp!
+      result.sub!(/\A\n+/, '')
+      result.gsub!(/\n+/, "\n")
+
+      STDOUT.puts(result)
+    end
+  end
+end
+
+
+
+class App
+  def initialize (argv)
+    command = argv.shift
+    params = argv.getopts('b:e:p:s:r:', 'banner:', 'prompt:', 'socket:', 'repl:', 'debug')
+
+    option = Option.new(params, argv)
+
+    case command
+    when 'server'
+      app = ServerApp.new(option)
+    when 'send'
+      app = ClientApp.new(option)
+    end.run
+  end
+end
+
+
+App.new(ARGV)
