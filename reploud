@@ -140,7 +140,7 @@ end
 class App
   def initialize (argv)
     command = argv.shift
-    params = argv.getopts('b:e:p:s:r:c:', 'banner:', 'prompt:', 'socket:', 'result:', 'command:', 'debug')
+    params = argv.getopts('b:e:p:s:R:c:', 'banner:', 'prompt:', 'socket:', 'result:', 'repl:', 'debug')
 
     option = Option.new(params, argv)
 
