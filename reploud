@@ -10,7 +10,7 @@ require 'shellwords'
 
 
 
-class Set < Struct.new(:banner, :prompt, :command_line)
+class Set < Struct.new(:banner, :prompt, :result, :command_line)
 end
 
 
@@ -19,12 +19,14 @@ Configs = {
     /=>\s*/,
     # /\e\[.*G\r\n/,
     /.*=>/,
+    nil,
     %w[lein repl]
   ),
   'irb' => Set.new(
     /\d>\s*/,
     # /.*=> /,
-    /irb\(main\):\d+:\d+>/,
+    /irb\(main\):\d+:\d+[*>]/,
+    /\A=>/,
     %w[irb]
   )
 }
@@ -40,11 +42,11 @@ end
 
 
 class Option
-  attr_reader :banner, :prompt, :socket, :command_line, :debug
+  attr_reader :banner, :prompt, :socket, :result, :command_line, :debug
 
   def initialize (params, command_line)
     if c = Configs[params['repl']]
-      @banner, @prompt, @command_line = c.banner, c.prompt, c.command_line
+      @banner, @prompt, @result, @command_line = c.banner, c.prompt, c.result, c.command_line
     end
 
     @banner = params['banner']  || params['b'] || @banner
@@ -56,6 +58,10 @@ class Option
 
   def command_line_text
     @command_line.map {|it| it.shellescape } .join(' ')
+  end
+
+  def empty?
+    @command_line.map(&:strip).all?(&:empty?)
   end
 end
 
@@ -122,6 +128,8 @@ class ClientApp
       result.sub!(/\A\n+/, '')
       result.gsub!(/\n+/, "\n")
 
+      result.gsub!(@option.result) if @option.result
+
       STDOUT.puts(result)
     end
   end
@@ -132,7 +140,7 @@ end
 class App
   def initialize (argv)
     command = argv.shift
-    params = argv.getopts('b:e:p:s:r:', 'banner:', 'prompt:', 'socket:', 'repl:', 'debug')
+    params = argv.getopts('b:e:p:s:r:c:', 'banner:', 'prompt:', 'socket:', 'result:', 'command:', 'debug')
 
     option = Option.new(params, argv)
 
@@ -140,6 +148,7 @@ class App
     when 'server'
       app = ServerApp.new(option)
     when 'send'
+      raise 'Empty' if option.empty?
       app = ClientApp.new(option)
     end.run
   end
